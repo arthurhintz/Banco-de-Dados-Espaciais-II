@@ -1,0 +1,103 @@
+-- 1) TRIGGER AUDITORIA PARA SALVAR AS ALTERACOES DA TABELA
+
+
+CREATE OR REPLACE FUNCTION auditoria_func()
+RETURNS TRIGGER AS $$
+BEGIN
+	IF	TG_OP = 'INSERT' THEN
+		INSERT INTO auditoria_zona(nome,cod_bairro, tipo_operacao, geom)
+		VALUES (NEW.nome, NEW.cod_bairro, 'INSERT', new.geom);
+	ELSIF	TG_OP = 'UPDATE' THEN
+		INSERT INTO auditoria_zona(nome, cod_bairro, tipo_operacao, geom)
+		VALUES (NEW.nome, NEW.cod_bairro, 'UPDATE', new.geom);
+	ELSIF	TG_OP = 'DELETE' THEN
+		INSERT INTO auditoria_zona(nome,cod_bairro, tipo_operacao, geom)
+		VALUES (OLD.nome, OLD.cod_bairro, 'DELETE', OLD.geom);
+	END IF;
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER tgr_auditoria_zona
+AFTER INSERT OR UPDATE OR DELETE ON construcao
+FOR EACH ROW
+EXECUTE FUNCTION auditoria_func();
+
+
+-- 2 )TRIGGER PARA CALCULAR A ÁREA E O PERÍMETRO
+
+create or replace function fun_area_perimetro()
+returns trigger as $$
+begin
+	new.area = st_area((st_transform(new.geom, 31982)))::decimal(10,2);
+	new.perimetro = st_perimeter((st_transform(new.geom, 31982)))::decimal(10,2);
+return new;
+end;
+$$
+language 'plpgsql';
+
+drop trigger if exists trg_area_perimetro on predio;
+
+create trigger trg_area_perimetro before insert or update
+on predio for each row execute procedure fun_area_perimetro();
+
+
+-- 3) TRIGGER DE VALIDAÇÃO UM LOCAL DENTRO DE OUTRO (supermercado dentro da quadra correta)
+
+CREATE OR REPLACE FUNCTION valida_supermercado_em_quadra()
+RETURNS TRIGGER AS $$
+DECLARE
+    geometria_quadra GEOMETRY;
+BEGIN
+    -- 1. Verifica se um CÓDIGO de quadra foi fornecido
+    IF NEW.cod_q IS NULL THEN
+        RAISE EXCEPTION 'Um  código de quadra deve ser fornecido para o supermercado.';
+    END IF;
+
+    -- 2. Busca a geometria da quadra correspondente ao cod_q
+    SELECT geom INTO geometria_quadra
+    FROM quadra
+    WHERE cod_q = NEW.cod_q;
+
+    -- 3. Valida se a quadra existe e se a geometria do supermercado está dentro dela
+    IF geometria_quadra IS NULL THEN
+        RAISE EXCEPTION 'O código de quadra % não foi encontrado.', NEW.cod_q;
+    ELSEIF NOT ST_Within(NEW.geom, geometria_quadra) THEN
+        RAISE EXCEPTION 'A localização do supermercado não está contida no polígono da quadra %.', NEW.cod_q;
+    END IF;
+
+    -- Se todas as validações passarem, permite a operação
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER t_valida_supermercado_em_quadra
+BEFORE INSERT OR UPDATE ON supermercado
+FOR EACH ROW
+EXECUTE FUNCTION valida_supermercado_em_quadra();
+
+
+-- 4) TRIGGER PARA VEROFOCAR SE UM LOCAL ESTA CONTIDO EM OUTRO, SEM VERIFICAR .COD
+
+
+CREATE OR REPLACE FUNCTION  verifica_construcao_dentro_zona()
+RETURNS TRIGGER AS $$
+BEGIN
+	IF NOT ST_Contains(
+		(SELECT geom FROM bairro WHERE cod_bairro = NEW.cod_bairro),
+		NEW.geom
+	) THEN 
+		RAISE EXCEPTION 'Construção fora do bairro informado';
+	END IF;
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+create trigger trg_verifica_construcao
+before insert or update or delete on construcao
+for each row execute function verifica_construcao_dentro_zona();
+
+
+
+
+
