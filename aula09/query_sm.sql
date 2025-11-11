@@ -53,3 +53,30 @@ ORDER BY perimetro_metros
 SELECT cod, nome, st_astext(geom)
 FROM mercados
 ORDER BY nome
+
+-- 8) Distância média entre as feiras e o centróide do município
+SELECT AVG(st_distance(st_transform(f.geom,31982), st_transform(st_centroid(m.geom), 31982))) as distancia_media_metros
+FROM mercados f, cidade m
+
+-- 9) Feiras mais próximas da feira da Avenida Roraima (bairro Camobi)
+SELECT f2.nome as feira_proxima, st_distance(st_transform(f1.geom, 31982), st_transform(f2.geom, 31982)) as distancia_metros
+FROM mercados f1, mercados f2
+WHERE f1.endereco ilike 'Avenida Roraima'
+and f1.nome <> f2.nome
+order by distancia_metros ASC
+limit 1;
+
+--10) feiras dentro de um buffer de 500m da feira da Avenida Roraima
+SELECT f2.nome as feira_proxima, st_distance(st_transform(f1.geom, 31982), st_transform(f2.geom, 31982)) as distancia_metros
+FROM mercados f1, mercados f2
+WHERE f1.endereco ilike 'Avenida Roraima' and st_dwithin(st_transform(f1.geom, 31982), st_transform(f2.geom, 31982), 500)
+and f1.cod <> f2.cod
+
+--11) Feiras próximas à fronteira entre dois bairos
+SELECT f.nome as feira, st_astext(f.geom), b1.nome as bairro1, b2.nome as bairro2
+FROM bairro b1, bairro b2, mercados f
+WHERE b1.cod_bairro < b2.cod_bairro
+and st_touches(st_transform(b1.geom, 31982), st_transform(b2.geom, 31982))
+and st_dwithin(st_transform(f.geom, 31982), st_transform(st_intersection(b1.geom, b2.geom), 31982), 50)
+
+
